@@ -1,0 +1,157 @@
+---
+title: "Пакет dplyr та vroom. Імпорт даних. Об'єднання таблиць"
+author: "Григоренко Ярослав Сергійович"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+---
+
+# Зміст
+- [Читання даних з TSV, CSV, Excel файлів та Google Таблиць](#читання-даних-з-tsv-csv-excel-файлів-та-google-таблиць)
+- [Пакет dplyr](#пакет-dplyr)
+- [Висновки](#висновки)
+
+## Читання даних з TSV, CSV, Excel файлів та Google Таблиць
+```{r}
+# Читання CSV, TSV та інших текстових файлів
+library("vroom")
+
+# читання локальних файлів
+ga_data <- vroom(file = "C:/Users/NLOVE/Desktop/lab2/ga_nowember.csv", delim = "/t")
+
+# читання файлів опублікованих в інтернеті
+ga_data_i <- vroom("https://raw.githubusercontent.com/selesnow/publications/master/data_example/russian_text_in_r/ga_nowember.csv")
+
+# Читання декількох файлів в одну таблицю
+files <- dir(path = "C:/Users/NLOVE/Desktop/lab2", pattern = "\\.csv", full.names = TRUE)
+ga_full <- vroom(files)
+```
+
+```{r}
+# Читання файлів Excel
+library(readxl)
+
+# отримання списку аркушів з файлу Excel
+excel_sheets("C:/Users/NLOVE/Desktop/lab2/ga_examples.xlsx")
+
+# рахування даних з листа
+xl_dec <- read_excel("C:/Users/NLOVE/Desktop/lab2/ga_examples.xlsx", sheet = "dec")
+```
+
+```{r}
+# Читання Google Таблиць
+library(googlesheets4)
+
+# Авторизація
+gs4_auth(email = "gamblinggalosh@gmail.com")
+gs4_find()
+
+# Підключення до доксу
+ss <- as_sheets_id("1IogpwEUAz8UU2GfiTVSb-uO9xrTFu-Cp_d14dm8x-sw")
+
+# відкритя доксу в браузері
+gs4_browse(ss)
+
+# перегляд списку листів
+sheet_names(ss)
+
+# отримання даних з аркуша
+gs_ga_data <- read_sheet(ss = ss, sheet = "dec")
+
+# отримання даних з діапазону на аркуші                      
+gs_ga_data <- read_sheet(ss = ss, 
+                          sheet = "dec", 
+                         range = "A1:C10")
+```
+
+## Пакет dplyr
+```{r, message=FALSE}
+# Завдання: зібрати таблицю з бонусами та ставками за 2 місяці
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(stringr)
+```
+
+```{r}
+# завантажуємо файл з інтернету
+download.file("https://github.com/selesnow/publications/blob/master/code_example/from_excel_to_r/lesson_7/salary.xlsx?raw=true", 
+              destfile = "salary.xlsx", 
+              mode = "wb")
+
+# зчитуємо листи
+sheets <- excel_sheets("salary.xlsx")              
+
+# зчитуємо книгу
+excel_book <- sapply( sheets, 
+                        read_excel, 
+                        path = "salary.xlsx" )
+
+# дивимося об'єкт
+str(excel_book)                        
+
+# дивимося зміст листа staff
+excel_book[['staff']]
+
+# створюємо дві окремі таблиці зі стовками
+staff_jan <- mutate(excel_book[['staff']], month = "2020.01") 
+staff_feb <- mutate(excel_book[['staff']], month = "2020.02")
+
+# об'єднуємо таблиці
+staff_salary <- bind_rows( staff_jan, staff_feb )
+
+# об'єднуємо бонуси
+staff_bonuses <- bind_rows(excel_book[["bonus_jan"]], 
+                           excel_book[["bonus_feb"]]) %>%
+                 mutate(month = format(date, "%Y.%m")) %>%
+                 group_by(employee_id, month) %>%
+                 summarise_at("bonus", sum)
+
+# об'єднуємо штрафи
+staff_payroll <- bind_rows(excel_book[["payroll_jan"]], 
+                           excel_book[["payroll_feb"]]) %>%
+                 mutate(month = format(date, "%Y.%m")) %>%
+                 group_by(employee_id, month) %>%
+                 summarise_at("sum", sum)                 
+
+# ГОРИЗОНТАЛЬНЕ ОБ'ЄДНАННЯ ТАБЛИЦЬ
+salary_analysis <- left_join(staff_salary, staff_bonuses, 
+                             by = c("id" = "employee_id", "month")) %>%
+                   left_join(staff_payroll,
+                             by = c("id" = "employee_id", "month")) %>%
+                   rename(payroll = sum) %>%
+                   mutate_at(c("bonus", "payroll"), replace_na, 0) %>%
+                   mutate(total = rate + bonus - payroll)                 
+
+# додамо дані про відділ
+salary_analysis <- left_join(salary_analysis, excel_book[['departmen']],
+                             by = c("departmen" = "id"), suffix = c("_emploee", "_dep"))                   
+
+# співробітники, які отримали штраф і в січні і в лютому
+semi_join(excel_book[['payroll_jan']], excel_book[['payroll_feb']], 
+          by = "employee_id") %>%
+  select(employee_id) %>%
+  distinct() %>%
+  left_join(excel_book[['staff']], 
+            by = c("employee_id" = "id"))                             
+
+# співробітники, які отримали штраф у січні, але не отримали лютого
+anti_join(excel_book[['payroll_jan']], excel_book[['payroll_feb']], 
+          by = "employee_id") %>%
+  select(employee_id) %>%
+  distinct() %>%
+  left_join(excel_book[['staff']], 
+            by = c("employee_id" = "id"))            
+
+# співробітники, які отримали штраф і бонус у січні
+semi_join(excel_book[['payroll_jan']], excel_book[['bonus_feb']], 
+          by = "employee_id") %>%
+  select(employee_id) %>%
+  distinct() %>%
+  left_join(excel_book[['staff']], 
+            by = c("employee_id" = "id"))            
+```
+
+## Висновки
+
+У даній лабораторній роботі було проведено детальний аналіз даних з використанням пакету dplyr та бібліотеки vroom. Загалом, лабораторна робота продемонструвала потужність та зручність використання R для аналізу даних, а також важливість знання методів імпорту та обробки даних для подальшого їх аналізу.

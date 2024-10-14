@@ -67,7 +67,6 @@ gs_ga_data <- read_sheet(ss = ss,
 ## Пакет dplyr
 ```{r, message=FALSE}
 # Завдання: зібрати таблицю з бонусами та ставками за 2 місяці
-library(readxl)
 library(dplyr)
 library(tidyr)
 library(stringr)

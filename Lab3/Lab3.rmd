@@ -1,0 +1,294 @@
+---
+title: "Приведення даних до охайного вигляду. Пакет tidyr. Обробка JSON та XML-структур"
+author: "Григоренко Ярослав Сергійович"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+---
+
+# Зміст
+- [Віконні функції у R](#віконні-функції-у-r)
+- [Пакет tidyr: Перетворення таблиць з широкого формату на довгий і навпаки, pivot_longer, pivot_wider](#пакет-tidyr-перетворення-таблиць-з-широкого-формату-на-довгий-і-навпаки-pivot_longer-pivot_wider)
+- [Пакет tidyr: Робота з вкладеними стовпцями, unnest_longer, unnest_wider](#пакет-tidyr-робота-з-вкладеними-стовпцями-unnest_longer-unnest_wider)
+- [Висновки](#висновки)
+
+## Віконні функції у R
+```{r, message=FALSE}
+library(readr)
+library(dplyr)
+```
+
+```{r}
+# завантаження даних
+salary <- read_csv("C:\\Users\\NLOVE\\Desktop\\Lab3\\salary_analysis.csv")
+
+# структура таблиці
+str(salary)
+```
+
+```{r}
+# Прості віконні функції
+
+# додаємо сумарну зарплату по відділу
+salary <- salary %>% 
+            group_by(departmen, month) %>%
+            mutate(total_dep = sum(total))
+
+# який відсоток зп отримує кожен співробітник у рамках відділу
+salary <- salary %>%
+            mutate(staff_rate = total / total_dep)            
+
+# вивести по кожному співробітнику різницю від середньої зарплати по відділу у межах місяця
+salary %>%
+  group_by(departmen, month) %>%
+  mutate(from_dep_avg = total / mean(total))            
+```
+
+```{r}
+# Ранжують віконні функції
+
+# співробітники, які мають найбільшу частку від ФОП свого відділу по місяцях
+rating_by_dap_rate <- 
+  salary %>%
+    group_by(month) %>%
+    mutate(rank = min_rank(staff_rate)) %>%
+    filter(rank ==  max(rank)) %>%
+    arrange(month)
+
+# співробітники, які отримали максимальний бонус в рамках кожного місяця
+salary %>%
+  group_by(month) %>%
+  mutate(rank = dense_rank(bonus)) %>%
+  filter(rank ==  max(rank)) %>%
+  arrange(month)  
+
+# Співробітники, які отримали максимальні бонуси за 2019 рік у відділах
+salary %>%
+  filter(grepl("^2019", month)) %>%    # фильтр по гожу
+  group_by(name_dep, name_emploee) %>% # группировка по отделу и сотруднику
+  summarise(bonus = sum(bonus)) %>%    # агрегация данных
+  group_by(name_dep) %>%               # создание окна по отделу
+  mutate(max_bonus = max(bonus)) %>%   # расчёт максимального бонуса в рамках отдела
+  filter(bonus == max_bonus)           # оставляем тех чей бонус равен максимальному  
+```
+
+```{r}
+# Вивести зростання зарплати кожного співробітника щодо минулого місяця
+salary_grow <-
+  salary %>%
+    arrange(month) %>%      # задаём сортировку по месяцам
+    group_by(id) %>%        # разбиваем таблицу на окна по сотрудникам
+    mutate(total_grow_rate = ( total - lag(total, order_by = month) ) / total ) # расчёт роста
+
+# вивести співробітників із максимальним зростанням зарплат у кожному місяці
+salary %>%
+  group_by(id) %>%        # разбиваем таблицу на окна по сотрудникам
+  mutate(total_grow_rate = ( total - lag(total, order_by = month) ) / total  ) %>%  # расчёт роста
+  group_by(month) %>%
+  filter(total_grow_rate == max(total_grow_rate, na.rm = T))
+```
+
+## Пакет tidyr: Перетворення таблиць з широкого формату на довгий і навпаки, pivot_longer, pivot_wider
+```{r}
+library(tidyr)
+library(readxl)
+
+# завантажуємо файл з інтернету
+download.file("https://github.com/selesnow/r4excel_users/blob/master/lesson_9/sales.xlsx?raw=true", 
+              destfile = "sales.xlsx", 
+              mode = "wb")
+
+# завантаження даних
+data <- read_excel('sales.xlsx', 
+                   sheet = 'data')
+
+# Завдання: порівняти середньомісячні продажі між регіонами у першому кварталі 2019 та 2020 року
+
+# заповнюємо стобець region
+data <- fill(data, region, .direction = 'down')                   
+
+# наводимо таблицю у правильний вигляд
+data <- pivot_longer(
+              data, 
+              cols = `january 2019`:`march 2020`, 
+              names_to  = 'month', 
+              values_to = 'sales')
+
+# розділимо стовпець month на рік і місяць
+data <- separate(data, 
+                 col = 'month', 
+                 into = c('month', 'year'), 
+                 remove = TRUE, sep = " ")    
+
+# фінальні розрахунки
+data <-
+  data %>%
+    filter(month %in% c('january', 'february', 'march')) %>%
+    group_by(region, year) %>%
+    summarise(sales = mean(sales))                 
+
+# Розширюємо таблицю
+data %>%
+  pivot_wider(names_from = year, 
+              values_from  = sales) %>%
+  mutate(grow = (`2020` - `2019`) / `2020` * 100) %>%
+  arrange(desc(grow))    
+
+# запишемо все через пайплайни
+read_excel('sales.xlsx', 
+           sheet = 'data') %>%
+  fill(region, 
+           .direction = 'down') %>%
+  pivot_longer(
+           cols = `january 2019`:`march 2020`, 
+           names_to  = 'month', 
+           values_to = 'sales') %>%
+  separate(col = 'month', 
+           into = c('month', 'year'), 
+           remove = TRUE, sep = " ") %>%
+  filter(month %in% c('january', 'february', 'march')) %>%
+  group_by(region, year) %>%
+  summarise(sales = mean(sales)) %>%
+  pivot_wider(names_from = year, 
+              values_from  = sales) %>%
+  mutate(grow = (`2020` - `2019`) / `2020` * 100) %>%
+  arrange(desc(grow))  
+```
+
+```{r}
+# Специфікації
+
+# Завдання: порахувати % повернень від суми продажу
+shop_data_2019 <- read_delim(
+                    'https://raw.githubusercontent.com/selesnow/r4excel_users/master/lesson_9/shop_data_2019.csv',
+                    delim = ';', locale = locale(decimal_mark = ",") )  
+
+# будуємо специфікацію
+wild_spec <- build_wider_spec(shop_data_2019, 
+                              names_from = 'key', 
+                              values_from = 'value')                    
+
+# застосовуємо специфікацію
+pivot_wider_spec(shop_data_2019, spec = wild_spec) %>%
+  mutate(refund_rate = refund / ( sale + upsale )) %>%
+  arrange(desc(refund_rate))
+
+# читаємо дані аналогічної структури
+shop_data_2020 <- read_delim(
+                    'https://raw.githubusercontent.com/selesnow/r4excel_users/master/lesson_9/shop_data_2020.csv',
+                    delim = ';', locale = locale(decimal_mark = ","))
+
+# застосовуємо специфікацію
+shop_data_2020 %>%
+  pivot_wider_spec(spec = wild_spec) %>%
+  mutate(refund_rate = refund / ( sale + upsale )) %>%
+  arrange(desc(refund_rate))                    
+
+# зберегти специфікацію
+saveRDS(object = wild_spec, file = 'spec.rds')  
+
+# завантажити специфікацію
+new_wild_spec <- readRDS('spec.rds')
+
+# застосовуємо
+pivot_wider_spec(shop_data_2019, spec = new_wild_spec) %>%
+  mutate(refund_rate = refund / ( sale + upsale )) %>%
+  arrange(desc(refund_rate))
+```
+
+## Пакет tidyr: Робота з вкладеними стовпцями, unnest_longer, unnest_wider
+```{r}
+library(jsonlite)
+```
+
+```{r}
+# Завдання 1: є json файл зі списком співробітників
+
+# 1. необхідно отримати співробітників у яких передбачені бонуси
+
+# читаємо json файл
+staff_dict <- read_json('https://raw.githubusercontent.com/selesnow/r4excel_users/master/lesson_10/simple.json')
+
+# Перетворимо json на tibble frame
+staff_dict <- tibble(employee = staff_dict)
+
+# 2. порахувати середню зарплату по відділах
+
+# розгортаємо кожен json вузол у вигляді окремого рядка
+# фільтруємо таблицю залишаючи тільки тих співробітників, у яких є бонуси
+staff_dict %>%
+  unnest_wider(employee) %>%
+  filter(bonus > 0)
+
+# вважаємо середню зарплату по відділах
+staff_dict %>%
+  unnest_wider(employee) %>%
+  group_by(department) %>%
+  summarise(average_salary = mean(salary))  
+```
+
+```{r}
+# Завдання 2: є json файл зі списком співробітників вивести список співробітників із їх зоною відповідальності
+staff_dict <- read_json('https://raw.githubusercontent.com/selesnow/r4excel_users/master/lesson_10/hard_data.json')
+  
+# Перетворимо json на tibble frame
+staff_dict <- tibble(employee = staff_dict)  
+
+## варіант рішення #1
+staff_dict %>%
+  unnest_wider(employee) %>%
+  select(name, department, salary, skills) %>%
+  unnest_wider(skills) %>%
+  select(name, department, salary, practics) %>% 
+  unnest_longer(practics) %>%
+  group_by(name, department, salary) %>%
+  summarise(practics = paste(practics, collapse = ", "))
+
+## варіант рішення #2
+staff_dict %>%
+  hoist(employee, 
+        name = "name",
+        department = "department",
+        salary = "salary",
+        practics = c("skills", "practics")) %>%
+  select(-employee) %>%
+  group_by(name, department, salary) %>%
+  mutate(practics = paste(unlist(practics), collapse = ", "))  
+```
+
+```{r}
+# Завдання 3: є json файл зі списком співробітників підняти на 20% зарплату співробітникам, які володіють мовою R
+staff_dict %>%
+  hoist(employee, 
+        name = "name",
+        salary = "salary",
+        langs = c("skills", "lang")) %>% 
+  select(-employee) %>%
+  unnest_longer(langs) %>%
+  filter(langs == 'R') %>%
+  mutate(new_salary = salary * 1.2)  
+```
+
+```{r}
+# Завдання 4: є json файл зі списком співробітників підняти на 30% зарплату співробітникам, які володіють більш ніж однією мовою програмування
+staff_dict %>%
+  hoist(employee, 
+        name = "name",
+        salary = "salary",
+        langs = c("skills", "lang")) %>% 
+  select(-employee) %>%
+  group_by(name) %>%
+  unnest_longer(langs) %>%
+  filter( ! is.na(langs) ) %>%
+  group_by( name, salary ) %>%
+  summarise( langs_num = length(langs) ) %>%
+  filter(langs_num > 1) %>%
+  mutate( new_salary =  salary * 1.3 )  
+```
+
+## Висновки
+У даній лабораторній роботі ми вивчили методи приведення даних до охайного вигляду за допомогою пакета tidyr в R, а також обробку JSON та XML-структур. Було продемонстровано використання різних функцій пакета tidyr для перетворення даних з широкого формату на довгий і навпаки (pivot_longer, pivot_wider), роботи з вкладеними стовпцями (unnest_longer, unnest_wider), а також застосування специфікацій для побудови та розширення таблиць.
+
+Ми також розглянули методи обробки даних у форматі JSON, перетворення структурованих даних на таблиці та здійснення аналізу даних.
+
+Лабораторна робота дала змогу закріпити навички роботи з даними, їхньої трансформації та візуалізації в R, що є необхідним для аналізу великих обсягів інформації та подальшої автоматизації цього процесу.
